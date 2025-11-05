@@ -1,15 +1,23 @@
+import type { Item } from "./store";
+import { expensiveDerive, type Derived } from "./expensive";
 
-import type { Item } from './store'
-import { expensiveDerive, type Derived } from './expensive'
+let cache = new WeakMap<Item[], Map<number, Derived>>();
 
-let key = { version: -1, predicateKey: -1 }
-let val: Derived | null = null
+export function deriveShared(items: Item[], predicateKey: number): Derived {
+  let inner = cache.get(items);
+  if (!inner) {
+    inner = new Map();
+    cache.set(items, inner);
+  }
 
-export function deriveShared(items: Item[], version: number, predicateKey: number): Derived {
-  if (val && key.version === version && key.predicateKey === predicateKey) return val
-  val = expensiveDerive(items, predicateKey)
-  key = { version, predicateKey }
-  return val
+  if (inner.has(predicateKey)) {
+    return inner.get(predicateKey)!;
+  }
+
+  const result = expensiveDerive(items, predicateKey);
+  inner.set(predicateKey, result);
+  return result;
 }
-
-export function resetSharedCache() { key = { version: -1, predicateKey: -1 }; val = null }
+export function resetSharedCache() {
+  cache = new WeakMap<Item[], Map<number, Derived>>();
+}

@@ -2,21 +2,44 @@ import React, { startTransition, useEffect } from "react";
 import { makeStore, StoreProvider } from "../store";
 import {
   UseStore_RenderBaseline,
-  UseStoreSelector_Derived,
+  UseStoreSelector_Raw,
   UseStore_RenderSharedCache,
-  UseStore_Compiler,
+  UseStore_Compiler_Raw,
+  UseStore_Compiler_Shared,
+  UseStoreSelector_Shared,
 } from "./Views";
 import { resetSelectorCache } from "../expensive";
 import { resetSharedCache } from "../sharedCache";
 import ReactDOMClient from "react-dom/client";
 import { flushSync } from "react-dom";
 
-type Mode =
-  | "render-baseline"
-  | "render-shared"
-  | "useStoreSelector"
-  | "precompute-on-write"
-  | "useStore-Compiler";
+const MODES = [
+  "useStore-raw",
+  "useStore-shared",
+  "useStoreSelector-raw",
+  "useStoreSelector-shared",
+  "useStore-compiler-raw",
+  "useStore-compiler-shared",
+] as const;
+type Mode = (typeof MODES)[number];
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, parseInt(n)));
+}
+function readNum(
+  p: URLSearchParams,
+  k: string,
+  d: number,
+  min = 1,
+  max = 1_000_000,
+) {
+  const v = Number(p.get(k));
+  return Number.isFinite(v) ? clamp(v, min, max) : d;
+}
+function readMode(p: URLSearchParams, d: Mode): Mode {
+  const m = p.get("mode") as Mode | null;
+  return m && (MODES as readonly string[]).includes(m) ? m : d;
+}
 
 // ADD at top (under imports)
 function makeSliceIds(count: number): string[] {
@@ -39,14 +62,23 @@ function distribute(subs: number, ids: string[]) {
   return Array.from({ length: subs }, (_, i) => ids[i % ids.length]);
 }
 
-let root: ReactDOMClient.Root;
+let root: ReactDOMClient.Root | null;
 export function App() {
-  const [itemsPerSlice, setItemsPerSlice] = React.useState(12_500); // total ~50k
-  const [numSubs, setNumSubs] = React.useState(200);
-  const [slicesCount, setSlicesCount] = React.useState(4);
-  const [numUpdates, setNumUpdates] = React.useState(100);
-  const [unmountPct, setUnmountPct] = React.useState(0); // 0..100
-  const [mode, setMode] = React.useState<Mode>("render-baseline");
+  const p = new URLSearchParams(window.location.search);
+  const initSubs = readNum(p, "subs", 200, 1);
+  const initItemsPer = readNum(p, "itemsPerSlice", 12_500, 1);
+  const initUpdates = readNum(p, "updates", 100, 1);
+  const initUnmount = readNum(p, "unmount", 0, 0, 100);
+  const initSlicesCount = readNum(p, "slices", 4, 1);
+  const initMode = readMode(p, MODES[0]);
+  // useState with URL defaults
+  const [numSubs, setNumSubs] = React.useState(initSubs);
+  const [itemsPerSlice, setItemsPerSlice] = React.useState(initItemsPer);
+  const [numUpdates, setNumUpdates] = React.useState(initUpdates);
+  const [unmountPct, setUnmountPct] = React.useState(initUnmount);
+  const [slicesCount, setSlicesCount] = React.useState(initSlicesCount);
+  const [mode, setMode] = React.useState<Mode>(initMode);
+
   const [running, setRunning] = React.useState(false);
   const [result, setResult] = React.useState<string>("");
 
@@ -55,34 +87,58 @@ export function App() {
     [slicesCount, numSubs],
   );
 
-  const storeRef = React.useRef(makeStore(itemsPerSlice, sliceIds));
+  // small debounce to avoid spamming history on rapid typing
+  const urlWriteTimer = React.useRef<number | null>(null);
+
   React.useEffect(() => {
-    storeRef.current = makeStore(itemsPerSlice, sliceIds);
-  }, [itemsPerSlice, sliceIds]);
+    const params = new URLSearchParams(window.location.search);
+    params.set("subs", String(numSubs));
+    params.set("itemsPerSlice", String(itemsPerSlice));
+    params.set("updates", String(numUpdates));
+    params.set("unmount", String(unmountPct));
+    params.set("slices", String(slicesCount));
+    params.set("mode", mode);
+
+    if (urlWriteTimer.current) window.clearTimeout(urlWriteTimer.current);
+    urlWriteTimer.current = window.setTimeout(() => {
+      const url = `${window.location.pathname}?${params.toString()}`;
+      window.history.replaceState(null, "", url);
+    }, 150);
+
+    return () => {
+      if (urlWriteTimer.current) window.clearTimeout(urlWriteTimer.current);
+    };
+  }, [numSubs, itemsPerSlice, numUpdates, unmountPct, slicesCount, mode]);
 
   const run = async () => {
     setRunning(true);
     setResult("");
     resetSelectorCache();
     resetSharedCache();
-    const store = storeRef.current;
-    const mountAt = document.getElementById("mount")!;
-    mountAt.innerHTML = "";
-    const root = await import("react-dom/client").then((m) =>
-      m.createRoot(mountAt),
-    );
+    const store = makeStore(itemsPerSlice, sliceIds);
 
-    flushSync(() => {
-      root.render(<div></div>);
-    });
+    if (root != null) {
+      flushSync(() => {
+        // @ts-ignore
+        root.unmount();
+      });
+
+      document.getElementById("mount")?.remove();
+      const newDiv = document.createElement("div");
+      newDiv.id = "mount";
+      newDiv.className = "card";
+      document.body.appendChild(newDiv);
+    }
+
+    const mountAt = document.getElementById("mount")!;
+    root = ReactDOMClient.createRoot(mountAt);
 
     const assignments = distribute(numSubs, sliceIds);
-    let resolve = { current: null };
     function renderSubs(visibleCount: number) {
       const Subs = () => (
         <StoreProvider>
           {assignments.slice(0, visibleCount).map((id, i) => {
-            if (mode === "render-baseline")
+            if (mode === "useStore-raw")
               return (
                 <UseStore_RenderBaseline
                   key={i}
@@ -91,7 +147,7 @@ export function App() {
                   idx={i}
                 />
               );
-            if (mode === "render-shared")
+            if (mode === "useStore-shared")
               return (
                 <UseStore_RenderSharedCache
                   key={i}
@@ -100,18 +156,24 @@ export function App() {
                   idx={i}
                 />
               );
-            if (mode === "useStoreSelector")
+            if (mode === "useStoreSelector-raw")
               return (
-                <UseStoreSelector_Derived
+                <UseStoreSelector_Raw key={i} store={store} id={id} idx={i} />
+              );
+            if (mode === "useStoreSelector-shared")
+              return (
+                <UseStoreSelector_Shared
                   key={i}
                   store={store}
                   id={id}
                   idx={i}
                 />
               );
-            if (mode === "useStore-Compiler")
-              return <UseStore_Compiler key={i} store={store} id={id} />;
-            return null;
+            if (mode === "useStore-compiler-raw")
+              return <UseStore_Compiler_Raw key={i} store={store} id={id} />;
+            if (mode === "useStore-compiler-shared")
+              return <UseStore_Compiler_Shared key={i} store={store} id={id} />;
+            return <div>Error: invalid mode {mode}</div>;
           })}
         </StoreProvider>
       );
@@ -123,25 +185,29 @@ export function App() {
     });
 
     const t0 = performance.now();
-    for (let u = 0; u < numUpdates; u++) {
-      // Update targeted slice
-      const sliceId = sliceIds[u % sliceIds.length];
-      const type = mode === "precompute-on-write" ? "tick_precompute" : "tick";
-      store.dispatch({ type, sliceId });
 
-      // Simulate "update causes unmount": on odd ticks, unmount fraction; even ticks remount all
-      if (unmountPct > 0) {
-        if (u % 2 === 1) {
-          const keep = Math.max(
-            0,
-            Math.floor(numSubs * (1 - unmountPct / 100)),
-          );
-          renderSubs(keep);
-        } else {
-          renderSubs(numSubs);
+    for (let u = 0; u < numUpdates; u++) {
+      flushSync(() => {
+        // Update targeted slice
+        const randomSliceId = Math.floor(Math.random() * 17) % sliceIds.length;
+        const sliceId = sliceIds[randomSliceId];
+        store.dispatch({ type: "tick", sliceId });
+
+        // Simulate "update causes unmount": on odd ticks, unmount fraction; even ticks remount all
+        if (unmountPct > 0) {
+          if (u % 2 === 1) {
+            const keep = Math.max(
+              0,
+              Math.floor(numSubs * (1 - unmountPct / 100)),
+            );
+            renderSubs(keep);
+          } else {
+            renderSubs(numSubs);
+          }
         }
-      }
+      });
     }
+
     const t1 = performance.now();
     const ms = (t1 - t0).toFixed(1);
     // In the result string:
@@ -163,13 +229,19 @@ export function App() {
             onChange={(e) => setMode(e.target.value as Mode)}
             disabled={running}
           >
-            <option value="render-baseline">useStore (baseline)</option>
-            <option value="render-shared">
-              useStore + derive in render (global shared cache)
+            <option value="useStore-raw">useStore (baseline)</option>
+            <option value="useStore-shared">useStore (baseline cached)</option>
+            <option value="useStoreSelector-raw">
+              useStoreSelector (no cache)
             </option>
-            <option value="useStore-Compiler">useStore + compiler</option>
-            <option value="useStoreSelector">
-              useStoreSelector (shared selector)
+            <option value="useStoreSelector-shared">
+              useStoreSelector (cached)
+            </option>
+            <option value="useStore-compiler-raw">
+              useStore + Compiler (no cache)
+            </option>
+            <option value="useStore-compiler-shared">
+              useStore + Compiler (cached)
             </option>
           </select>
         </label>
@@ -178,7 +250,7 @@ export function App() {
           <input
             type="number"
             value={numSubs}
-            onChange={(e) => setNumSubs(+e.target.value)}
+            onChange={(e) => setNumSubs(parseInt(e.target.value))}
             disabled={running}
           />
         </label>
@@ -187,7 +259,7 @@ export function App() {
           <input
             type="number"
             value={itemsPerSlice}
-            onChange={(e) => setItemsPerSlice(+e.target.value)}
+            onChange={(e) => setItemsPerSlice(parseInt(e.target.value))}
             disabled={running}
           />
         </label>
@@ -199,7 +271,9 @@ export function App() {
             max={numSubs}
             value={slicesCount}
             onChange={(e) =>
-              setSlicesCount(Math.max(1, Math.min(numSubs, +e.target.value)))
+              setSlicesCount(
+                Math.max(1, Math.min(numSubs, parseInt(e.target.value))),
+              )
             }
             disabled={running}
           />
@@ -209,7 +283,7 @@ export function App() {
           <input
             type="number"
             value={numUpdates}
-            onChange={(e) => setNumUpdates(+e.target.value)}
+            onChange={(e) => setNumUpdates(parseInt(e.target.value))}
             disabled={running}
           />
         </label>
@@ -221,7 +295,9 @@ export function App() {
             max="100"
             value={unmountPct}
             onChange={(e) =>
-              setUnmountPct(Math.max(0, Math.min(100, +e.target.value)))
+              setUnmountPct(
+                Math.max(0, Math.min(100, parseInt(e.target.value))),
+              )
             }
             disabled={running}
           />

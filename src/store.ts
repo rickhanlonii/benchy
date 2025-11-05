@@ -13,14 +13,13 @@ export type Slice = {
   items: Item[];
   version: number;
   predicateKey: number;
-  derived?: Derived;
 };
 export type State = { slices: Record<string, Slice> };
 
 function makeItems(n: number): Item[] {
   const arr = new Array(n);
   for (let i = 0; i < n; i++) {
-    arr[i] = { id: i, score: (i * 2654435761) >>> 0, group: i % 10 };
+    arr[i] = { id: i, score: ((i + 1) * 2654435761) >>> 0, group: i % 10 };
   }
   return arr;
 }
@@ -30,7 +29,6 @@ function makeSlice(n: number): Slice {
     items: makeItems(n),
     version: 0,
     predicateKey: 0,
-    derived: undefined,
   };
 }
 
@@ -63,11 +61,7 @@ export function makeStore(nPerSlice: number, ids: string[]) {
           nextItems[idx] = { ...it, score: (it.score ^ prev.version) >>> 0 };
         }
         const version = prev.version + 1;
-        const predicateKey = version;
-        const derived =
-          action.type === "tick_precompute"
-            ? expensiveDerive(nextItems, predicateKey)
-            : undefined;
+        const predicateKey = Math.floor(Math.random() * 10) + 1;
         return {
           slices: {
             ...s.slices,
@@ -75,7 +69,6 @@ export function makeStore(nPerSlice: number, ids: string[]) {
               items: nextItems,
               version,
               predicateKey,
-              derived,
             },
           },
         };

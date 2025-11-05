@@ -10,11 +10,13 @@ export const CONFIG = {
 
 export function expensiveDerive(items: Item[], predicateKey: number): Derived {
   performance.mark(`derive`);
-  const pass = predicateKey % 10;
+  const pass = (predicateKey + 17 * 7) % 10;
   let out: Item[] = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    if (it.group === pass && it.score & 1) out.push(it);
+    if (it.group === pass) {
+      out.push(it);
+    }
   }
   out.sort((a, b) => b.score - a.score);
 
@@ -22,7 +24,8 @@ export function expensiveDerive(items: Item[], predicateKey: number): Derived {
   const n = Math.min(CONFIG.SORT_LIMIT, out.length);
   for (let r = 0; r < CONFIG.DERIVATION_DUPLICATION; r++) {
     for (let i = 0; i < n; i++) {
-      acc = (acc ^ ((out[i].score * 1103515245 + 12345) >>> 0)) >>> 0;
+      const mix = ((out[i].score * 1103515245 + 12345) >>> 0) ^ r; // <-- r breaks symmetry
+      acc = (acc ^ mix) >>> 0;
     }
   }
   return { acc, top: out.slice(0, CONFIG.TOP) };
