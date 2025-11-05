@@ -195,20 +195,20 @@ export function App() {
 
         // Simulate "update causes unmount": on odd ticks, unmount fraction; even ticks remount all
         if (unmountPct > 0) {
-          if (u % 2 === 1) {
-            const keep = Math.max(
-              0,
-              Math.floor(numSubs * (1 - unmountPct / 100)),
-            );
-            renderSubs(keep);
-          } else {
-            renderSubs(numSubs);
-          }
+          const keep = Math.max(
+            0,
+            Math.floor(numSubs * (1 - unmountPct / 100)),
+          );
+          renderSubs(keep);
         }
       });
     }
 
     const t1 = performance.now();
+    performance.measure("Result", {
+      start: t0,
+      end: t1,
+    });
     const ms = (t1 - t0).toFixed(1);
     // In the result string:
     setResult(
