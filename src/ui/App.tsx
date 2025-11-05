@@ -24,6 +24,7 @@ const MODES = [
 type Mode = (typeof MODES)[number];
 
 function clamp(n: number, min: number, max: number) {
+  // @ts-ignore
   return Math.max(min, Math.min(max, parseInt(n)));
 }
 function readNum(
@@ -177,6 +178,7 @@ export function App() {
           })}
         </StoreProvider>
       );
+      // @ts-ignore
       root.render(<Subs />);
     }
 

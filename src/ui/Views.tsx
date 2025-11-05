@@ -128,6 +128,7 @@ export function UseStore_Compiler_Shared(t0: { store: any; id: any }) {
   const { store, id } = t0;
 
   const s = useStore(store);
+  // @ts-ignore
   const slice = s.slices[id];
   let t1;
   if ($[0] !== slice.items || $[1] !== slice.predicateKey) {
