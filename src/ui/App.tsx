@@ -1,4 +1,4 @@
-import React from "react";
+import React, { startTransition, useEffect } from "react";
 import { makeStore, StoreProvider } from "../store";
 import {
   UseStore_RenderBaseline,
@@ -77,7 +77,7 @@ export function App() {
     });
 
     const assignments = distribute(numSubs, sliceIds);
-
+    let resolve = { current: null };
     function renderSubs(visibleCount: number) {
       const Subs = () => (
         <StoreProvider>
@@ -127,22 +127,20 @@ export function App() {
       // Update targeted slice
       const sliceId = sliceIds[u % sliceIds.length];
       const type = mode === "precompute-on-write" ? "tick_precompute" : "tick";
-      flushSync(() => {
-        store.dispatch({ type, sliceId });
+      store.dispatch({ type, sliceId });
 
-        // Simulate "update causes unmount": on odd ticks, unmount fraction; even ticks remount all
-        if (unmountPct > 0) {
-          if (u % 2 === 1) {
-            const keep = Math.max(
-              0,
-              Math.floor(numSubs * (1 - unmountPct / 100)),
-            );
-            renderSubs(keep);
-          } else {
-            renderSubs(numSubs);
-          }
+      // Simulate "update causes unmount": on odd ticks, unmount fraction; even ticks remount all
+      if (unmountPct > 0) {
+        if (u % 2 === 1) {
+          const keep = Math.max(
+            0,
+            Math.floor(numSubs * (1 - unmountPct / 100)),
+          );
+          renderSubs(keep);
+        } else {
+          renderSubs(numSubs);
         }
-      });
+      }
     }
     const t1 = performance.now();
     const ms = (t1 - t0).toFixed(1);
